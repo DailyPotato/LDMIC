@@ -23,7 +23,7 @@ import wandb
 import os
 from tqdm import tqdm
 from pytorch_msssim import ms_ssim
-os.environ["WANDB_API_KEY"] = "xxxxxxxxxxxxxxxxxxxxx" # write your own wandb id 
+os.environ["WANDB_API_KEY"] = "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" # write your own wandb id
 
 def compute_aux_loss(aux_list: List, backward=False):
     aux_loss_sum = 0

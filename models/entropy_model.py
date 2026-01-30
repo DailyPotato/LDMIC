@@ -4,10 +4,14 @@ from torch import nn
 from compressai.models.utils import update_registered_buffers, conv, deconv
 from compressai.entropy_models import GaussianConditional
 from compressai.models import CompressionModel, get_scale_table
-from compressai.ops import ste_round
+# from compressai.ops import ste_round(没有找到正确的版本，因此自己实现所需函数)
 from compressai.layers import ResidualBlock, GDN, MaskedConv2d, conv3x3, ResidualBlockWithStride
 import torch.nn.functional as F
 import copy
+
+# 自己实现ste_round
+def ste_round(x):
+    return (x - x.detach()) + torch.round(x.detach())
 
 class CheckMaskedConv2d(nn.Conv2d):
     """

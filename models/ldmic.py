@@ -4,16 +4,18 @@ from torch import nn
 from compressai.models.utils import update_registered_buffers, conv, deconv
 from compressai.entropy_models import GaussianConditional
 from compressai.models import CompressionModel, get_scale_table
-from compressai.ops import ste_round
+# from compressai.ops import ste_round(没有找到正确的版本，因此自己实现所需函数)
 from compressai.layers import ResidualBlock, GDN, MaskedConv2d, conv3x3, ResidualBlockWithStride
-from deepspeed.profiling.flops_profiler import get_model_profile
+# from deepspeed.profiling.flops_profiler import get_model_profile(单一GPU不需要deepspeed)
 import torch.nn.functional as F
-from entropy_model import Hyperprior, CheckMaskedConv2d
+from .entropy_model import Hyperprior, CheckMaskedConv2d# (entropy_model前面加.)
 from torch.autograd import Variable
 from math import exp
 import os
 from compressai.ans import BufferedRansEncoder, RansDecoder
-
+# 自己实现ste_round
+def ste_round(x):
+    return (x - x.detach()) + torch.round(x.detach())
 
 class JointContextTransfer(nn.Module):
     def __init__(self, channels):
