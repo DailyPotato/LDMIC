@@ -2,7 +2,7 @@ import torch
 import math
 from torch import nn
 from compressai.models.utils import update_registered_buffers, conv, deconv
-from compressai.entropy_models import GaussianConditional
+from compressai.entropy_models import GaussianConditional, EntropyBottleneck
 from compressai.models import CompressionModel, get_scale_table
 # from compressai.ops import ste_round(没有找到正确的版本，因此自己实现所需函数)
 from compressai.layers import ResidualBlock, GDN, MaskedConv2d, conv3x3, ResidualBlockWithStride
@@ -46,7 +46,8 @@ class CheckMaskedConv2d(nn.Conv2d):
 
 class Hyperprior(CompressionModel):
     def __init__(self, in_planes: int = 192, mid_planes: int = 192, out_planes: int=192):
-        super().__init__(entropy_bottleneck_channels=mid_planes)
+        super().__init__()
+        self.entropy_bottleneck = EntropyBottleneck(mid_planes)
         self.hyper_encoder = nn.Sequential(
             conv(in_planes, mid_planes, stride=1, kernel_size=3),
             nn.LeakyReLU(inplace=True),

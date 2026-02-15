@@ -15,7 +15,8 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from models.ldmic import *
-from lib.utils import get_output_folder, AverageMeter, save_checkpoint, StereoImageDataset
+from lib.utils import get_output_folder, AverageMeter, save_checkpoint
+from mydatapro import StereoImageDataset, MultiCameraImageDataset
 import numpy as np
 
 import yaml
@@ -23,7 +24,7 @@ import wandb
 import os
 from tqdm import tqdm
 from pytorch_msssim import ms_ssim
-os.environ["WANDB_API_KEY"] = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx" # write your own wandb id
+os.environ["WANDB_API_KEY"] = "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" # write your own wandb id
 
 def compute_aux_loss(aux_list: List, backward=False):
     aux_loss_sum = 0
@@ -265,6 +266,27 @@ def parse_args(argv):
         default=1e-4,
         help="Learning rate (default: %(default)s)",
     )
+    parser.add_argument(
+        "--num-camera", type=int, default=2, help="Number of cameras to load (MultiCameraImageDataset)"
+    )
+    parser.add_argument(
+        "--dir-num", type=int, default=2, help="How many camera folders (C1...Ck) to use"
+    )
+    parser.add_argument(
+        "--train-test-ratio", type=int, default=4, help="Train:test ratio k means k:1"
+    )
+    parser.add_argument(
+        "--dataaug-alpha", type=float, default=1.0, help="CutMix alpha value"
+    )
+    parser.add_argument(
+        "--no-dataaug", action="store_true", help="Disable data augmentation"
+    )
+    parser.add_argument(
+        "--force-crop", action="store_true", help="Force random crop even in test"
+    )
+    parser.add_argument(
+        "--multi-camera", action="store_true", help="Use MultiCameraImageDataset instead of StereoImageDataset"
+    )
     args = parser.parse_args(argv)
     return args
 
@@ -278,9 +300,23 @@ def main(argv):
         torch.manual_seed(args.seed)
         random.seed(args.seed)
 
-    # Warning, the order of the transform composition should be kept.
-    train_dataset = StereoImageDataset(ds_type='train', ds_name=args.data_name, root=args.dataset, crop_size=args.patch_size, resize=args.resize)
-    test_dataset = StereoImageDataset(ds_type='test', ds_name=args.data_name, root=args.dataset, crop_size=args.patch_size, resize=args.resize)
+    # Build datasets from mydatapro.py
+    common_ds_kwargs = dict(
+        ds_name=args.data_name,
+        root=args.dataset,
+        crop_size=tuple(args.patch_size),
+        train_test_ratio=args.train_test_ratio,
+        dataaug=not args.no_dataaug,
+        dataaug_alpha=args.dataaug_alpha,
+        force_crop=args.force_crop,
+    )
+
+    if args.multi_camera:
+        train_dataset = MultiCameraImageDataset(ds_type='train', num_camera=args.num_camera, dir_num=args.dir_num, **common_ds_kwargs)
+        test_dataset = MultiCameraImageDataset(ds_type='test', num_camera=args.num_camera, dir_num=args.dir_num, dataaug=False, **common_ds_kwargs)
+    else:
+        train_dataset = StereoImageDataset(ds_type='train', **common_ds_kwargs)
+        test_dataset = StereoImageDataset(ds_type='test', **common_ds_kwargs)
 
     device = "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers, 
@@ -307,12 +343,12 @@ def main(argv):
         print("Loading model: ", args.i_model_path)
         checkpoint = torch.load(args.i_model_path, map_location=device)
         net.load_state_dict(checkpoint["state_dict"])   
-            last_epoch = checkpoint["epoch"] + 1
-            optimizer.load_state_dict(checkpoint["optimizer"])
-            aux_optimizer.load_state_dict(checkpoint["aux_optimizer"])
-            lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-            best_b_model_path = os.path.join(os.path.split(args.i_model_path)[0], 'ckpt.best.pth.tar')
-            best_loss = torch.load(best_b_model_path)["loss"]
+        last_epoch = checkpoint["epoch"] + 1
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        aux_optimizer.load_state_dict(checkpoint["aux_optimizer"])
+        lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        best_b_model_path = os.path.join(os.path.split(args.i_model_path)[0], 'ckpt.best.pth.tar')
+        best_loss = torch.load(best_b_model_path)["loss"]
 
 
     log_dir, experiment_id = get_output_folder('./checkpoints/{}/{}/{}/lamda{}/'.format(args.data_name, args.metric, args.model_name, int(args.lmbda)), 'train')

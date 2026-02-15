@@ -9,7 +9,7 @@ import struct
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
-
+from mydatapro import MultiCameraImageDataset
 import numpy as np
 import torch
 import torch.nn as nn
@@ -27,7 +27,7 @@ from compressai.zoo.pretrained import load_pretrained
 from compressai.zoo.image import model_urls, cfgs
 from models.ldmic import *
 from models.entropy_model import *
-from model_zoo import models_arch
+
 from torch.hub import load_state_dict_from_url
 from lib.utils import CropCityscapesArtefacts, MinimalCrop
 
@@ -163,6 +163,8 @@ def eval_model_entropy_estimation(IFrameCompressor:nn.Module, filepaths: List, *
             metrics["bpp"] = 0
             for idx, f in enumerate(filepaths):
                 x_rec = out["x_hat"][idx].clamp(0, 1)
+                _, _, H, W = x_list[idx].shape
+                x_rec = x_rec[:, :, :H, :W]
                 metrics[f"index{idx}-psnr-float"], metrics[f"index{idx}-ms-ssim-float"] = compute_metrics_for_frame(x_list[idx], x_rec, device, max_val)
                 likelihoods = out["likelihoods"][idx]
                 metrics[f"index{idx}-bpp"] = compute_bpp(likelihoods, num_pixels)
@@ -255,12 +257,25 @@ def main(args: Any = None) -> None:
     if args is None:
         args = sys.argv[1:]
     parser = create_parser()
+    parser.add_argument("--dir-num", type=int, default=2, help="Number of camera directories")
+    parser.add_argument("--train-test-ratio", type=int, default=4, help="Train:test ratio k means k:1")
     args = parser.parse_args(args)
 
     description = (
         "entropy-estimation" if args.entropy_estimation else args.entropy_coder
     )
-    filepaths = collect_images(args.data_name, args.dataset, args.num_camera)
+    test_dataset = MultiCameraImageDataset(
+        ds_type='test',
+        ds_name=args.data_name,
+        root=args.dataset,
+        crop_size=(256, 256),
+        num_camera=args.num_camera,
+        dir_num=args.dir_num,
+        train_test_ratio=args.train_test_ratio,
+        dataaug=False,
+        force_crop=False,
+    )
+    filepaths = test_dataset.image_lists
     if len(filepaths) == 0:
         print("Error: no images found in directory.", file=sys.stderr)
         raise SystemExit(1)
@@ -284,6 +299,14 @@ def main(args: Any = None) -> None:
     if args.i_model_path:
         print("Loading model:", args.i_model_path)
         checkpoint = torch.load(args.i_model_path, map_location=device)
+        state_dict = checkpoint["state_dict"]
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            new_key = k
+            for atten_name in ["atten_3", "atten_4"]:
+                new_key = new_key.replace(f"{atten_name}.rb.0.", f"{atten_name}.rb1.")
+                new_key = new_key.replace(f"{atten_name}.rb.1.", f"{atten_name}.rb2.")
+            new_state_dict[new_key] = v
         IFrameCompressor.load_state_dict(checkpoint["state_dict"])
         IFrameCompressor.update(force=True)
         IFrameCompressor.eval()

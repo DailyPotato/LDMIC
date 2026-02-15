@@ -17,7 +17,7 @@ from torchvision import transforms
 from models.ldmic import *
 from lib.utils import get_output_folder, AverageMeter, save_checkpoint, MultiCameraImageDataset, AdaptiveMultiCameraImageDataset
 import numpy as np
-
+from mydatapro import StereoImageDataset, MultiCameraImageDataset
 import yaml
 import wandb
 import os
@@ -62,10 +62,14 @@ def configure_optimizers(net, args):
         lr=args.learning_rate,
     )
 
-    aux_optimizer = optim.Adam(
-            (params_dict[n] for n in sorted(aux_parameters)),
+    aux_param_list = [params_dict[n] for n in sorted(aux_parameters)]
+    if len(aux_param_list) == 0:
+        aux_optimizer = None
+    else:
+        aux_optimizer = optim.Adam(
+            aux_param_list,
             lr=args.learning_rate,
-    )
+        )
     return optimizer, aux_optimizer
 
 
@@ -114,7 +118,8 @@ def train_one_epoch(model, criterion, train_dataloader, optimizer, aux_optimizer
             metric_loss.update(out_criterion[metric_name].item())
             metric_dB.update(out_criterion[metric_dB_name].item())
 
-            train_dataloader.dataset.set_num_camera()
+            if hasattr(train_dataloader.dataset, 'set_num_camera'):
+                train_dataloader.dataset.set_num_camera()
 
             loop.set_description('[{}/{}]'.format(i, len(train_dataloader)))
             loop.set_postfix({"Loss":loss.avg, 'Bpp':bpp_loss.avg, args.metric: metric_loss.avg, 'Aux':aux_loss.avg,
@@ -191,10 +196,28 @@ def parse_args(argv):
         help="Dataloaders threads (default: %(default)s)",
     )
     parser.add_argument(
+        "--dir-num", type=int, default=2, help="How many camera folders (C1...Ck) to use"
+    )
+    parser.add_argument(
+        "--train-test-ratio", type=int, default=4, help="Train:test ratio k means k:1"
+    )
+    parser.add_argument(
+        "--dataaug-alpha", type=float, default=1.0, help="CutMix alpha value"
+    )
+    parser.add_argument(
+        "--no-dataaug", action="store_true", help="Disable data augmentation"
+    )
+    parser.add_argument(
+        "--force-crop", action="store_true", help="Force random crop even in test"
+    )
+    parser.add_argument(
+        "--multi-camera", action="store_true", help="Use MultiCameraImageDataset instead of StereoImageDataset"
+    )
+    parser.add_argument(
         "--lambda",
         dest="lmbda",
         type=float,
-        default=2048,
+        default=2048,# 2048显示内存不够
         help="Bit-rate distortion parameter (default: %(default)s)",
     )
     parser.add_argument(
@@ -253,8 +276,30 @@ def main(argv):
         torch.manual_seed(args.seed)
         random.seed(args.seed)
  
-    train_dataset = AdaptiveMultiCameraImageDataset(ds_type='train', ds_name=args.data_name, root=args.dataset, crop_size=args.patch_size, ) 
-    test_dataset = AdaptiveMultiCameraImageDataset(ds_type='test', ds_name=args.data_name, root=args.dataset, crop_size=args.patch_size, ) 
+    # 使用 mydatapro.MultiCameraImageDataset
+    common_ds_kwargs = dict(
+        ds_name=args.data_name,
+        root=args.dataset,
+        crop_size=tuple(args.patch_size),
+        train_test_ratio=args.train_test_ratio,
+        dataaug=not args.no_dataaug,
+        dataaug_alpha=args.dataaug_alpha,
+        force_crop=args.force_crop,
+    )
+    test_ds_kwargs = {**common_ds_kwargs, 'dataaug': False}
+
+    train_dataset = MultiCameraImageDataset(
+        ds_type='train',
+        num_camera=args.num_camera,
+        dir_num=args.dir_num,
+        **common_ds_kwargs,
+    )
+    test_dataset = MultiCameraImageDataset(
+        ds_type='test',
+        num_camera=args.num_camera,
+        dir_num=args.dir_num,
+        **test_ds_kwargs,
+    )
 
     device = "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers, 
